@@ -1,5 +1,7 @@
 export type ScenarioStatus = 'draft' | 'evaluating' | 'pending_review' | 'approved' | 'archived';
 
+export type ZoneCapacityState = 'ok' | 'tight' | 'critical';
+
 export interface ConstraintViolation {
   code: string;
   severity: 'critical' | 'warning';
@@ -30,9 +32,22 @@ export interface ZoneThermalResult {
   zone_code: string;
   assigned_heat_kw: number;
   neighbor_heat_kw: number;
+  effective_heat_kw: number;
+  capacity_kw: number;
   estimated_return_c: number;
   temperature_margin_c: number;
   cooling_margin_kw: number;
+  outage_capacity_kw: number;
+  outage_cooling_margin_kw: number;
+  capacity_state: ZoneCapacityState;
+}
+
+export interface TightZoneAck {
+  zone_id: number;
+  zone_code: string;
+  acknowledged_by: number;
+  actor_username: string;
+  acknowledged_at: string;
 }
 
 export interface LayoutScenario {
@@ -42,6 +57,7 @@ export interface LayoutScenario {
   assignments: RackAssignment[];
   zone_results: ZoneThermalResult[];
   violations: ConstraintViolation[];
+  tight_zone_acks: TightZoneAck[];
   total_power_kw: number;
   peak_temp_c: number;
   score: number;
@@ -50,6 +66,9 @@ export interface LayoutScenario {
   created_by: number;
   approved_by: number | null;
   has_critical_violation: boolean;
+  tight_zone_codes: string[];
+  pending_tight_zone_codes: string[];
+  has_unacknowledged_tight_zones: boolean;
 }
 
 export interface ScenarioComparison {

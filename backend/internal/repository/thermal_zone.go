@@ -93,7 +93,8 @@ func (r *ThermalZoneRepository) Update(ctx context.Context, zone *model.ThermalZ
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&model.ThermalZone{}).Where("id = ?", zone.ID).Updates(map[string]any{
 			"name": zone.Name, "cooling_capacity_kw": zone.CoolingCapacityKW,
-			"supply_temp_c": zone.SupplyTempC, "max_return_temp_c": zone.MaxReturnTempC,
+			"outage_cooling_capacity_kw": zone.OutageCoolingCapacityKW,
+			"supply_temp_c":              zone.SupplyTempC, "max_return_temp_c": zone.MaxReturnTempC,
 			"adjacency_json": zone.AdjacencyJSON, "zone_status": zone.ZoneStatus,
 		})
 		if result.Error != nil {

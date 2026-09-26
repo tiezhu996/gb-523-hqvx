@@ -7,7 +7,7 @@ import (
 	"datacenter-thermal-capacity-planner/backend/internal/model"
 )
 
-const AlgorithmVersion = "thermal-v1"
+const AlgorithmVersion = "thermal-v2"
 
 type Engine struct {
 	maxIterations int

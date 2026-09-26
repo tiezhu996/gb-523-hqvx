@@ -13,5 +13,8 @@ export class ScenarioApi {
   transition(id: number, version: number, target: ScenarioStatus, reason: string): Observable<LayoutScenario> {
     return this.api.post(`/scenarios/${id}/transition`, {version, target_status: target, reason});
   }
+  acknowledgeTightZones(id: number, version: number, zoneIds: number[]): Observable<LayoutScenario> {
+    return this.api.post(`/scenarios/${id}/acknowledge-tight-zones`, {version, zone_ids: zoneIds});
+  }
   compare(leftId: number, rightId: number): Observable<ScenarioComparison> { return this.api.get(`/scenarios/${leftId}/compare`, {right_id: rightId}); }
 }

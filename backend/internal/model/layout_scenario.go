@@ -16,6 +16,7 @@ type LayoutScenario struct {
 	TotalPowerKW             float64                  `gorm:"not null;default:0" json:"total_power_kw"`
 	PeakTempC                float64                  `gorm:"not null;default:0" json:"peak_temp_c"`
 	ConstraintViolationsJSON string                   `gorm:"type:text;not null;default:'[]'" json:"constraint_violations_json"`
+	TightZoneAcksJSON        string                   `gorm:"type:text;not null;default:'[]'" json:"tight_zone_acks_json"`
 	Score                    float64                  `gorm:"not null;default:0" json:"score"`
 	AlgorithmVersion         string                   `gorm:"size:32;not null;default:'thermal-v1'" json:"algorithm_version"`
 	Version                  uint                     `gorm:"not null;default:1" json:"version"`

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"datacenter-thermal-capacity-planner/backend/internal/audit"
 	"datacenter-thermal-capacity-planner/backend/internal/constants"
@@ -163,6 +164,10 @@ func (s *LayoutScenarioService) Transition(ctx context.Context, id uint, req dto
 	if req.TargetStatus == constants.ScenarioApproved && decoded.HasCriticalViolation {
 		return dto.ScenarioResponse{}, web.Unprocessable("CRITICAL_VIOLATIONS", "scenario cannot be approved while critical violations remain", nil)
 	}
+	if req.TargetStatus == constants.ScenarioApproved && decoded.HasUnacknowledgedTightZones {
+		return dto.ScenarioResponse{}, web.Unprocessable("TIGHT_ZONES_NOT_ACKNOWLEDGED",
+			fmt.Sprintf("acknowledge capacity-tight thermal zones before approval: %s", strings.Join(decoded.PendingTightZoneCodes, ", ")), nil)
+	}
 	actor.Action = "layout_scenario.transition"
 	if req.TargetStatus == constants.ScenarioApproved {
 		actor.Action = "layout_scenario.approve"
@@ -174,6 +179,75 @@ func (s *LayoutScenarioService) Transition(ctx context.Context, id uint, req dto
 		return dto.ScenarioResponse{}, err
 	}
 	return s.Get(ctx, id)
+}
+
+func (s *LayoutScenarioService) AcknowledgeTightZones(ctx context.Context, id uint, req dto.AcknowledgeTightZonesRequest, actor audit.Entry) (dto.ScenarioResponse, error) {
+	current, err := s.scenarios.Get(ctx, id)
+	if err != nil {
+		return dto.ScenarioResponse{}, err
+	}
+	if current.Version != req.Version {
+		return dto.ScenarioResponse{}, web.Conflict("SCENARIO_VERSION_CONFLICT", "scenario was changed by another user", nil)
+	}
+	decoded := dto.DecodeScenario(current)
+	if current.ScenarioStatus != constants.ScenarioPendingReview {
+		return dto.ScenarioResponse{}, web.Unprocessable("SCENARIO_NOT_PENDING_REVIEW", "tight zones can only be acknowledged while the scenario is pending review", nil)
+	}
+	tightByID := map[uint]dto.ZoneThermalResult{}
+	for _, zone := range decoded.ZoneResults {
+		if zone.CapacityState == dto.ZoneCapacityTight {
+			tightByID[zone.ZoneID] = zone
+		}
+	}
+	if len(tightByID) == 0 {
+		return dto.ScenarioResponse{}, web.Unprocessable("NO_TIGHT_ZONES", "scenario has no capacity-tight thermal zones to acknowledge", nil)
+	}
+	seen := map[uint]bool{}
+	for _, zoneID := range req.ZoneIDs {
+		if zoneID == 0 {
+			return dto.ScenarioResponse{}, web.Unprocessable("INVALID_ZONE_ID", "zone ids must be positive", nil)
+		}
+		if seen[zoneID] {
+			return dto.ScenarioResponse{}, web.Unprocessable("INVALID_ZONE_ID", "zone ids must not contain duplicates", nil)
+		}
+		seen[zoneID] = true
+		if _, ok := tightByID[zoneID]; !ok {
+			return dto.ScenarioResponse{}, web.Unprocessable("ZONE_NOT_TIGHT", fmt.Sprintf("thermal zone %d is not capacity tight in this evaluation", zoneID), nil)
+		}
+	}
+	// Existing acknowledgements (possibly from another reviewer) are retained;
+	// each tight zone keeps the record of who first acknowledged it.
+	acks := decoded.TightZoneAcks
+	acknowledged := map[uint]bool{}
+	for _, ack := range acks {
+		acknowledged[ack.ZoneID] = true
+	}
+	timestamp := time.Now().UTC().Format(time.RFC3339)
+	added := []string{}
+	for _, zoneID := range req.ZoneIDs {
+		if acknowledged[zoneID] {
+			continue
+		}
+		zone := tightByID[zoneID]
+		acks = append(acks, dto.TightZoneAck{
+			ZoneID: zoneID, ZoneCode: zone.ZoneCode, AcknowledgedBy: actor.ActorID,
+			ActorUsername: actor.ActorUsername, AcknowledgedAt: timestamp,
+		})
+		added = append(added, zone.ZoneCode)
+	}
+	payload, err := json.Marshal(acks)
+	if err != nil {
+		return dto.ScenarioResponse{}, web.Internal(fmt.Errorf("encode tight zone acknowledgements: %w", err))
+	}
+	actor.Action = "layout_scenario.acknowledge_tight_zones"
+	actor.EntityType = "layout_scenario"
+	actor.BeforeSummary = fmt.Sprintf("pending=%s", strings.Join(decoded.PendingTightZoneCodes, ","))
+	actor.AfterSummary = fmt.Sprintf("acknowledged=%s", strings.Join(added, ","))
+	updated, err := s.scenarios.AcknowledgeTightZones(ctx, id, req.Version, string(payload), actor)
+	if err != nil {
+		return dto.ScenarioResponse{}, err
+	}
+	return dto.DecodeScenario(updated), nil
 }
 
 func (s *LayoutScenarioService) Compare(ctx context.Context, leftID, rightID uint) (dto.ScenarioComparison, error) {

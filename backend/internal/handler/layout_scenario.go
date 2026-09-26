@@ -98,6 +98,23 @@ func (h *LayoutScenarioHandler) Transition(c *gin.Context) {
 	web.OK(c, item)
 }
 
+func (h *LayoutScenarioHandler) AcknowledgeTightZones(c *gin.Context) {
+	id, ok := web.ParamID(c)
+	if !ok {
+		return
+	}
+	var req dto.AcknowledgeTightZonesRequest
+	if !web.BindJSON(c, &req) {
+		return
+	}
+	item, err := h.service.AcknowledgeTightZones(c.Request.Context(), id, req, auditFrom(c))
+	if err != nil {
+		web.Fail(c, err)
+		return
+	}
+	web.OK(c, item)
+}
+
 func (h *LayoutScenarioHandler) Compare(c *gin.Context) {
 	leftID, ok := web.ParamID(c)
 	if !ok {

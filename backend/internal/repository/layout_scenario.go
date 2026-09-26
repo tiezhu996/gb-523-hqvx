@@ -112,6 +112,7 @@ func (r *LayoutScenarioRepository) FinishEvaluation(ctx context.Context, scenari
 				"input_snapshot_json":        update.SnapshotJSON,
 				"zone_results_json":          update.ZoneResultsJSON,
 				"constraint_violations_json": update.ViolationsJSON,
+				"tight_zone_acks_json":       "[]",
 				"total_power_kw":             update.TotalPowerKW,
 				"peak_temp_c":                update.PeakTempC,
 				"score":                      update.Score,
@@ -151,4 +152,40 @@ func (r *LayoutScenarioRepository) Transition(ctx context.Context, scenario mode
 		entry.AfterSummary = string(target)
 		return r.audit.RecordWithDB(ctx, tx, entry)
 	})
+}
+
+// AcknowledgeTightZones records reviewer acknowledgement for capacity-tight
+// zones on a pending-review scenario. The acknowledgement set is replaced
+// wholesale and optimistic locking is enforced through the version number.
+func (r *LayoutScenarioRepository) AcknowledgeTightZones(ctx context.Context, id, expectedVersion uint, acksJSON string, entry audit.Entry) (model.LayoutScenario, error) {
+	var scenario model.LayoutScenario
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.First(&scenario, id).Error; err != nil {
+			return web.NotFound("layout scenario")
+		}
+		if scenario.Version != expectedVersion {
+			return web.Conflict("SCENARIO_VERSION_CONFLICT", "scenario was changed by another user", nil)
+		}
+		if scenario.ScenarioStatus != constants.ScenarioPendingReview {
+			return web.Unprocessable("SCENARIO_NOT_PENDING_REVIEW", "tight zones can only be acknowledged while the scenario is pending review", nil)
+		}
+		result := tx.Model(&model.LayoutScenario{}).
+			Where("id = ? AND version = ?", id, expectedVersion).
+			Updates(map[string]any{"tight_zone_acks_json": acksJSON, "version": gorm.Expr("version + 1")})
+		if result.Error != nil {
+			return fmt.Errorf("acknowledge tight zones: %w", result.Error)
+		}
+		if result.RowsAffected != 1 {
+			return web.Conflict("SCENARIO_VERSION_CONFLICT", "scenario changed while acknowledging tight zones", nil)
+		}
+		entry.EntityID = id
+		return r.audit.RecordWithDB(ctx, tx, entry)
+	})
+	if err != nil {
+		return model.LayoutScenario{}, err
+	}
+	if err := r.db.WithContext(ctx).First(&scenario, id).Error; err != nil {
+		return model.LayoutScenario{}, fmt.Errorf("reload layout scenario %d: %w", id, err)
+	}
+	return scenario, nil
 }

@@ -28,6 +28,7 @@ func propagateThermal(zones []model.ThermalZone, directHeat map[uint]float64) ([
 		}
 		effectiveHeat := directHeat[zone.ID] + neighborHeat
 		capacity := zone.CoolingCapacityKW
+		outageCapacity := zone.OutageCoolingKW()
 		utilization := 0.0
 		if capacity > 0 {
 			utilization = effectiveHeat / capacity
@@ -36,16 +37,35 @@ func propagateThermal(zones []model.ThermalZone, directHeat map[uint]float64) ([
 		estimated := zone.SupplyTempC + utilization*12
 		margin := zone.MaxReturnTempC - estimated
 		coolingMargin := capacity - effectiveHeat
+		outageCoolingMargin := outageCapacity - effectiveHeat
+		capacityState := dto.ZoneCapacityOK
+		if effectiveHeat > capacity {
+			// Effective heat past the normal envelope is a critical violation and
+			// automatically overrides the post-outage classification.
+			capacityState = dto.ZoneCapacityCritical
+		} else if effectiveHeat > outageCapacity {
+			capacityState = dto.ZoneCapacityTight
+		}
 		results = append(results, dto.ZoneThermalResult{
 			ZoneID: zone.ID, ZoneCode: zone.ZoneCode, AssignedHeatKW: round2(directHeat[zone.ID]),
-			NeighborHeatKW: round2(neighborHeat), EstimatedReturnC: round2(estimated),
-			TemperatureMarginC: round2(margin), CoolingMarginKW: round2(coolingMargin),
+			NeighborHeatKW: round2(neighborHeat), EffectiveHeatKW: round2(effectiveHeat),
+			CapacityKW:       round2(capacity),
+			EstimatedReturnC: round2(estimated), TemperatureMarginC: round2(margin),
+			CoolingMarginKW: round2(coolingMargin), OutageCapacityKW: round2(outageCapacity),
+			OutageCoolingMarginKW: round2(outageCoolingMargin), CapacityState: capacityState,
 		})
 		if estimated > peak {
 			peak = estimated
 		}
 		if coolingMargin < 0 {
 			violations = append(violations, violation("ZONE_COOLING_LIMIT", zone.ID, "thermal_zone", "effective heat including adjacency exceeds cooling capacity", effectiveHeat, capacity))
+		}
+		if capacityState == dto.ZoneCapacityTight {
+			violations = append(violations, dto.ConstraintViolation{
+				Code: "ZONE_OUTAGE_CAPACITY_TIGHT", Severity: "warning", EntityType: "thermal_zone", EntityID: zone.ID,
+				Message: "effective heat fits the normal envelope but exceeds post-outage cooling capacity; reviewer acknowledgement required before approval",
+				Actual:  round2(effectiveHeat), Limit: round2(outageCapacity),
+			})
 		}
 		if margin < 0 {
 			violations = append(violations, violation("ZONE_RETURN_TEMP", zone.ID, "thermal_zone", "estimated return temperature exceeds configured limit", estimated, zone.MaxReturnTempC))
