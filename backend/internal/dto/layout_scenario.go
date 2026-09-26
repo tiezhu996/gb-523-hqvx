@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	"datacenter-thermal-capacity-planner/backend/internal/constants"
 	"datacenter-thermal-capacity-planner/backend/internal/model"
@@ -22,6 +23,10 @@ type TransitionScenarioRequest struct {
 	TargetStatus constants.ScenarioStatus `json:"target_status" binding:"required"`
 	Version      uint                     `json:"version" binding:"required"`
 	Reason       string                   `json:"reason" binding:"max=500"`
+}
+
+type ConfirmTightZonesRequest struct {
+	Version uint `json:"version" binding:"required"`
 }
 
 type ConstraintViolation struct {
@@ -57,23 +62,37 @@ type ZoneThermalResult struct {
 	EstimatedReturnC   float64 `json:"estimated_return_c"`
 	TemperatureMarginC float64 `json:"temperature_margin_c"`
 	CoolingMarginKW    float64 `json:"cooling_margin_kw"`
+	PostOutageMarginKW float64 `json:"post_outage_margin_kw"`
+}
+
+// TightZoneConfirmation records that a reviewer acknowledged a capacity-tight
+// zone (effective heat above post-outage cooling) before approval.
+type TightZoneConfirmation struct {
+	ZoneID         uint      `json:"zone_id"`
+	ZoneCode       string    `json:"zone_code"`
+	ConfirmedBy    uint      `json:"confirmed_by"`
+	ConfirmedByName string   `json:"confirmed_by_name"`
+	ConfirmedAt    time.Time `json:"confirmed_at"`
 }
 
 type ScenarioResponse struct {
-	ID                   uint                     `json:"id"`
-	Name                 string                   `json:"name"`
-	ScenarioStatus       constants.ScenarioStatus `json:"scenario_status"`
-	Assignments          []RackAssignment         `json:"assignments"`
-	ZoneResults          []ZoneThermalResult      `json:"zone_results"`
-	Violations           []ConstraintViolation    `json:"violations"`
-	TotalPowerKW         float64                  `json:"total_power_kw"`
-	PeakTempC            float64                  `json:"peak_temp_c"`
-	Score                float64                  `json:"score"`
-	Version              uint                     `json:"version"`
-	AlgorithmVersion     string                   `json:"algorithm_version"`
-	CreatedBy            uint                     `json:"created_by"`
-	ApprovedBy           *uint                    `json:"approved_by"`
-	HasCriticalViolation bool                     `json:"has_critical_violation"`
+	ID                      uint                     `json:"id"`
+	Name                    string                   `json:"name"`
+	ScenarioStatus          constants.ScenarioStatus `json:"scenario_status"`
+	Assignments             []RackAssignment         `json:"assignments"`
+	ZoneResults             []ZoneThermalResult      `json:"zone_results"`
+	Violations              []ConstraintViolation    `json:"violations"`
+	TightZoneConfirmations  []TightZoneConfirmation  `json:"tight_zone_confirmations"`
+	TotalPowerKW            float64                  `json:"total_power_kw"`
+	PeakTempC               float64                  `json:"peak_temp_c"`
+	Score                   float64                  `json:"score"`
+	Version                 uint                     `json:"version"`
+	AlgorithmVersion        string                   `json:"algorithm_version"`
+	CreatedBy               uint                     `json:"created_by"`
+	ApprovedBy              *uint                    `json:"approved_by"`
+	HasCriticalViolation    bool                     `json:"has_critical_violation"`
+	HasTightZones           bool                     `json:"has_tight_zones"`
+	TightZonesConfirmed     bool                     `json:"tight_zones_confirmed"`
 }
 
 type ScenarioComparison struct {
@@ -102,6 +121,19 @@ func (r CreateLayoutScenarioRequest) ValidateBusiness() error {
 	return nil
 }
 
+// TightZoneIDs returns the thermal zone ids currently flagged ZONE_CAPACITY_TIGHT.
+func TightZoneIDs(violations []ConstraintViolation) []uint {
+	ids := []uint{}
+	seen := map[uint]bool{}
+	for _, violation := range violations {
+		if violation.Code == "ZONE_CAPACITY_TIGHT" && violation.EntityType == "thermal_zone" && !seen[violation.EntityID] {
+			seen[violation.EntityID] = true
+			ids = append(ids, violation.EntityID)
+		}
+	}
+	return ids
+}
+
 func DecodeScenario(value model.LayoutScenario) ScenarioResponse {
 	response := ScenarioResponse{
 		ID: value.ID, Name: value.Name, ScenarioStatus: value.ScenarioStatus,
@@ -109,13 +141,28 @@ func DecodeScenario(value model.LayoutScenario) ScenarioResponse {
 		Score: value.Score, Version: value.Version, AlgorithmVersion: value.AlgorithmVersion,
 		CreatedBy: value.CreatedBy, ApprovedBy: value.ApprovedBy,
 		Assignments: []RackAssignment{}, ZoneResults: []ZoneThermalResult{}, Violations: []ConstraintViolation{},
+		TightZoneConfirmations: []TightZoneConfirmation{},
 	}
 	_ = json.Unmarshal([]byte(value.RackAssignmentsJSON), &response.Assignments)
 	_ = json.Unmarshal([]byte(value.ZoneResultsJSON), &response.ZoneResults)
 	_ = json.Unmarshal([]byte(value.ConstraintViolationsJSON), &response.Violations)
+	_ = json.Unmarshal([]byte(value.TightZoneConfirmationsJSON), &response.TightZoneConfirmations)
 	for _, violation := range response.Violations {
 		if violation.Severity == "critical" {
 			response.HasCriticalViolation = true
+			break
+		}
+	}
+	tightIDs := TightZoneIDs(response.Violations)
+	response.HasTightZones = len(tightIDs) > 0
+	confirmed := map[uint]bool{}
+	for _, confirmation := range response.TightZoneConfirmations {
+		confirmed[confirmation.ZoneID] = true
+	}
+	response.TightZonesConfirmed = true
+	for _, id := range tightIDs {
+		if !confirmed[id] {
+			response.TightZonesConfirmed = false
 			break
 		}
 	}

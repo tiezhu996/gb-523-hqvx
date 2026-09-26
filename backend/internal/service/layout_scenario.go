@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"datacenter-thermal-capacity-planner/backend/internal/audit"
 	"datacenter-thermal-capacity-planner/backend/internal/constants"
@@ -163,6 +164,9 @@ func (s *LayoutScenarioService) Transition(ctx context.Context, id uint, req dto
 	if req.TargetStatus == constants.ScenarioApproved && decoded.HasCriticalViolation {
 		return dto.ScenarioResponse{}, web.Unprocessable("CRITICAL_VIOLATIONS", "scenario cannot be approved while critical violations remain", nil)
 	}
+	if req.TargetStatus == constants.ScenarioApproved && decoded.HasTightZones && !decoded.TightZonesConfirmed {
+		return dto.ScenarioResponse{}, web.Unprocessable("TIGHT_ZONES_UNCONFIRMED", "capacity-tight zones must be confirmed before approval; confirm them first", nil)
+	}
 	actor.Action = "layout_scenario.transition"
 	if req.TargetStatus == constants.ScenarioApproved {
 		actor.Action = "layout_scenario.approve"
@@ -171,6 +175,60 @@ func (s *LayoutScenarioService) Transition(ctx context.Context, id uint, req dto
 	actor.BeforeSummary = string(current.ScenarioStatus)
 	actor.AfterSummary = fmt.Sprintf("%s reason=%s", req.TargetStatus, strings.TrimSpace(req.Reason))
 	if err := s.scenarios.Transition(ctx, current, req.TargetStatus, actor.ActorID, actor); err != nil {
+		return dto.ScenarioResponse{}, err
+	}
+	return s.Get(ctx, id)
+}
+
+func (s *LayoutScenarioService) ConfirmTightZones(ctx context.Context, id, version uint, actor audit.Entry) (dto.ScenarioResponse, error) {
+	current, err := s.scenarios.Get(ctx, id)
+	if err != nil {
+		return dto.ScenarioResponse{}, err
+	}
+	if current.Version != version {
+		return dto.ScenarioResponse{}, web.Conflict("SCENARIO_VERSION_CONFLICT", "scenario was changed by another user", nil)
+	}
+	if current.ScenarioStatus != constants.ScenarioPendingReview {
+		return dto.ScenarioResponse{}, web.Unprocessable("INVALID_SCENARIO_STATE", "tight zones can only be confirmed while the scenario is pending review", nil)
+	}
+	decoded := dto.DecodeScenario(current)
+	tightIDs := dto.TightZoneIDs(decoded.Violations)
+	if len(tightIDs) == 0 {
+		return dto.ScenarioResponse{}, web.Unprocessable("NO_TIGHT_ZONES", "scenario has no capacity-tight zones to confirm", nil)
+	}
+	zoneCodes := map[uint]string{}
+	for _, result := range decoded.ZoneResults {
+		zoneCodes[result.ZoneID] = result.ZoneCode
+	}
+	confirmed := map[uint]bool{}
+	confirmations := decoded.TightZoneConfirmations
+	for _, item := range confirmations {
+		confirmed[item.ZoneID] = true
+	}
+	now := time.Now().UTC()
+	added := []string{}
+	for _, zoneID := range tightIDs {
+		if confirmed[zoneID] {
+			continue
+		}
+		code := zoneCodes[zoneID]
+		confirmations = append(confirmations, dto.TightZoneConfirmation{
+			ZoneID: zoneID, ZoneCode: code, ConfirmedBy: actor.ActorID,
+			ConfirmedByName: actor.ActorUsername, ConfirmedAt: now,
+		})
+		added = append(added, code)
+	}
+	if len(added) == 0 {
+		return s.Get(ctx, id)
+	}
+	encoded, err := json.Marshal(confirmations)
+	if err != nil {
+		return dto.ScenarioResponse{}, web.Internal(fmt.Errorf("encode tight zone confirmations: %w", err))
+	}
+	actor.Action = "layout_scenario.confirm_tight_zones"
+	actor.EntityType = "layout_scenario"
+	actor.AfterSummary = fmt.Sprintf("confirmed tight zones=%v", added)
+	if err := s.scenarios.SaveTightZoneConfirmations(ctx, current, string(encoded), actor); err != nil {
 		return dto.ScenarioResponse{}, err
 	}
 	return s.Get(ctx, id)

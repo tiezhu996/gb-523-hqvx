@@ -36,16 +36,25 @@ func propagateThermal(zones []model.ThermalZone, directHeat map[uint]float64) ([
 		estimated := zone.SupplyTempC + utilization*12
 		margin := zone.MaxReturnTempC - estimated
 		coolingMargin := capacity - effectiveHeat
+		postOutageCapacity := zone.PostOutageCapacityKWValue()
+		postOutageMargin := postOutageCapacity - effectiveHeat
 		results = append(results, dto.ZoneThermalResult{
 			ZoneID: zone.ID, ZoneCode: zone.ZoneCode, AssignedHeatKW: round2(directHeat[zone.ID]),
 			NeighborHeatKW: round2(neighborHeat), EstimatedReturnC: round2(estimated),
 			TemperatureMarginC: round2(margin), CoolingMarginKW: round2(coolingMargin),
+			PostOutageMarginKW: round2(postOutageMargin),
 		})
 		if estimated > peak {
 			peak = estimated
 		}
 		if coolingMargin < 0 {
 			violations = append(violations, violation("ZONE_COOLING_LIMIT", zone.ID, "thermal_zone", "effective heat including adjacency exceeds cooling capacity", effectiveHeat, capacity))
+		} else if postOutageMargin < 0 {
+			violations = append(violations, dto.ConstraintViolation{
+				Code: "ZONE_CAPACITY_TIGHT", Severity: "warning", EntityType: "thermal_zone", EntityID: zone.ID,
+				Message: "capacity tight: effective heat exceeds post-outage cooling capacity and needs reviewer confirmation",
+				Actual:  round2(effectiveHeat), Limit: postOutageCapacity,
+			})
 		}
 		if margin < 0 {
 			violations = append(violations, violation("ZONE_RETURN_TEMP", zone.ID, "thermal_zone", "estimated return temperature exceeds configured limit", estimated, zone.MaxReturnTempC))

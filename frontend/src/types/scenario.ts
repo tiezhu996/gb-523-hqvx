@@ -33,6 +33,15 @@ export interface ZoneThermalResult {
   estimated_return_c: number;
   temperature_margin_c: number;
   cooling_margin_kw: number;
+  post_outage_margin_kw: number;
+}
+
+export interface TightZoneConfirmation {
+  zone_id: number;
+  zone_code: string;
+  confirmed_by: number;
+  confirmed_by_name: string;
+  confirmed_at: string;
 }
 
 export interface LayoutScenario {
@@ -42,6 +51,7 @@ export interface LayoutScenario {
   assignments: RackAssignment[];
   zone_results: ZoneThermalResult[];
   violations: ConstraintViolation[];
+  tight_zone_confirmations: TightZoneConfirmation[];
   total_power_kw: number;
   peak_temp_c: number;
   score: number;
@@ -50,6 +60,8 @@ export interface LayoutScenario {
   created_by: number;
   approved_by: number | null;
   has_critical_violation: boolean;
+  has_tight_zones: boolean;
+  tight_zones_confirmed: boolean;
 }
 
 export interface ScenarioComparison {

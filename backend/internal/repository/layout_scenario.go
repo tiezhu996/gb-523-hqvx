@@ -108,15 +108,16 @@ func (r *LayoutScenarioRepository) FinishEvaluation(ctx context.Context, scenari
 		result := tx.Model(&model.LayoutScenario{}).
 			Where("id = ? AND version = ? AND scenario_status = ?", scenario.ID, scenario.Version, constants.ScenarioEvaluating).
 			Updates(map[string]any{
-				"rack_assignments_json":      update.AssignmentsJSON,
-				"input_snapshot_json":        update.SnapshotJSON,
-				"zone_results_json":          update.ZoneResultsJSON,
-				"constraint_violations_json": update.ViolationsJSON,
-				"total_power_kw":             update.TotalPowerKW,
-				"peak_temp_c":                update.PeakTempC,
-				"score":                      update.Score,
-				"scenario_status":            constants.ScenarioPendingReview,
-				"version":                    gorm.Expr("version + 1"),
+				"rack_assignments_json":         update.AssignmentsJSON,
+				"input_snapshot_json":           update.SnapshotJSON,
+				"zone_results_json":             update.ZoneResultsJSON,
+				"constraint_violations_json":    update.ViolationsJSON,
+				"tight_zone_confirmations_json": "[]",
+				"total_power_kw":                update.TotalPowerKW,
+				"peak_temp_c":                   update.PeakTempC,
+				"score":                         update.Score,
+				"scenario_status":               constants.ScenarioPendingReview,
+				"version":                       gorm.Expr("version + 1"),
 			})
 		if result.Error != nil {
 			return fmt.Errorf("finish scenario evaluation: %w", result.Error)
@@ -127,6 +128,25 @@ func (r *LayoutScenarioRepository) FinishEvaluation(ctx context.Context, scenari
 		entry.EntityID = scenario.ID
 		entry.BeforeSummary = string(constants.ScenarioEvaluating)
 		entry.AfterSummary = fmt.Sprintf("%s score=%.1f", constants.ScenarioPendingReview, update.Score)
+		return r.audit.RecordWithDB(ctx, tx, entry)
+	})
+}
+
+func (r *LayoutScenarioRepository) SaveTightZoneConfirmations(ctx context.Context, scenario model.LayoutScenario, confirmationsJSON string, entry audit.Entry) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&model.LayoutScenario{}).
+			Where("id = ? AND version = ? AND scenario_status = ?", scenario.ID, scenario.Version, scenario.ScenarioStatus).
+			Updates(map[string]any{
+				"tight_zone_confirmations_json": confirmationsJSON,
+				"version":                       gorm.Expr("version + 1"),
+			})
+		if result.Error != nil {
+			return fmt.Errorf("save tight zone confirmations: %w", result.Error)
+		}
+		if result.RowsAffected != 1 {
+			return web.Conflict("SCENARIO_VERSION_CONFLICT", "scenario changed before confirmations were saved", nil)
+		}
+		entry.EntityID = scenario.ID
 		return r.audit.RecordWithDB(ctx, tx, entry)
 	})
 }

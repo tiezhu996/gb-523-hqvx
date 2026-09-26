@@ -5,6 +5,8 @@ export interface ThermalZone {
   zone_code: string;
   name: string;
   cooling_capacity_kw: number;
+  post_outage_capacity_kw: number | null;
+  effective_post_outage_capacity_kw: number;
   supply_temp_c: number;
   max_return_temp_c: number;
   adjacency: Record<string, number>;
@@ -19,6 +21,7 @@ export interface ZoneInput {
   zone_code?: string;
   name: string;
   cooling_capacity_kw: number;
+  post_outage_capacity_kw?: number | null;
   supply_temp_c: number;
   max_return_temp_c: number;
   adjacency: Record<string, number>;

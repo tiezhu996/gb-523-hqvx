@@ -10,37 +10,48 @@ import (
 )
 
 type CreateThermalZoneRequest struct {
-	ZoneCode          string             `json:"zone_code" binding:"required,min=2,max=32"`
-	Name              string             `json:"name" binding:"required,min=2,max=120"`
-	CoolingCapacityKW float64            `json:"cooling_capacity_kw" binding:"required,gt=0,lte=10000"`
-	SupplyTempC       float64            `json:"supply_temp_c" binding:"required,gte=10,lte=30"`
-	MaxReturnTempC    float64            `json:"max_return_temp_c" binding:"required,gte=18,lte=60"`
-	Adjacency         map[string]float64 `json:"adjacency" binding:"required"`
-	ZoneStatus        string             `json:"zone_status" binding:"required,oneof=active constrained offline"`
+	ZoneCode             string             `json:"zone_code" binding:"required,min=2,max=32"`
+	Name                 string             `json:"name" binding:"required,min=2,max=120"`
+	CoolingCapacityKW    float64            `json:"cooling_capacity_kw" binding:"required,gt=0,lte=10000"`
+	PostOutageCapacityKW *float64           `json:"post_outage_capacity_kw" binding:"omitempty,gt=0,lte=10000"`
+	SupplyTempC          float64            `json:"supply_temp_c" binding:"required,gte=10,lte=30"`
+	MaxReturnTempC       float64            `json:"max_return_temp_c" binding:"required,gte=18,lte=60"`
+	Adjacency            map[string]float64 `json:"adjacency" binding:"required"`
+	ZoneStatus           string             `json:"zone_status" binding:"required,oneof=active constrained offline"`
 }
 
 type UpdateThermalZoneRequest struct {
-	Name              string             `json:"name" binding:"required,min=2,max=120"`
-	CoolingCapacityKW float64            `json:"cooling_capacity_kw" binding:"required,gt=0,lte=10000"`
-	SupplyTempC       float64            `json:"supply_temp_c" binding:"required,gte=10,lte=30"`
-	MaxReturnTempC    float64            `json:"max_return_temp_c" binding:"required,gte=18,lte=60"`
-	Adjacency         map[string]float64 `json:"adjacency" binding:"required"`
-	ZoneStatus        string             `json:"zone_status" binding:"required,oneof=active constrained offline"`
+	Name                 string             `json:"name" binding:"required,min=2,max=120"`
+	CoolingCapacityKW    float64            `json:"cooling_capacity_kw" binding:"required,gt=0,lte=10000"`
+	PostOutageCapacityKW *float64           `json:"post_outage_capacity_kw" binding:"omitempty,gt=0,lte=10000"`
+	SupplyTempC          float64            `json:"supply_temp_c" binding:"required,gte=10,lte=30"`
+	MaxReturnTempC       float64            `json:"max_return_temp_c" binding:"required,gte=18,lte=60"`
+	Adjacency            map[string]float64 `json:"adjacency" binding:"required"`
+	ZoneStatus           string             `json:"zone_status" binding:"required,oneof=active constrained offline"`
 }
 
 type ThermalZoneResponse struct {
-	ID                  uint               `json:"id"`
-	ZoneCode            string             `json:"zone_code"`
-	Name                string             `json:"name"`
-	CoolingCapacityKW   float64            `json:"cooling_capacity_kw"`
-	SupplyTempC         float64            `json:"supply_temp_c"`
-	MaxReturnTempC      float64            `json:"max_return_temp_c"`
-	Adjacency           map[string]float64 `json:"adjacency"`
-	ZoneStatus          string             `json:"zone_status"`
-	RackCount           int64              `json:"rack_count"`
-	AllocatedPowerKW    float64            `json:"allocated_power_kw"`
-	CapacityUtilization float64            `json:"capacity_utilization"`
-	TemperatureHeadroom float64            `json:"temperature_headroom_c"`
+	ID                           uint               `json:"id"`
+	ZoneCode                     string             `json:"zone_code"`
+	Name                         string             `json:"name"`
+	CoolingCapacityKW            float64            `json:"cooling_capacity_kw"`
+	PostOutageCapacityKW         *float64           `json:"post_outage_capacity_kw"`
+	EffectivePostOutageCapacityKW float64           `json:"effective_post_outage_capacity_kw"`
+	SupplyTempC                  float64            `json:"supply_temp_c"`
+	MaxReturnTempC               float64            `json:"max_return_temp_c"`
+	Adjacency                    map[string]float64 `json:"adjacency"`
+	ZoneStatus                   string             `json:"zone_status"`
+	RackCount                    int64              `json:"rack_count"`
+	AllocatedPowerKW             float64            `json:"allocated_power_kw"`
+	CapacityUtilization          float64            `json:"capacity_utilization"`
+	TemperatureHeadroom          float64            `json:"temperature_headroom_c"`
+}
+
+func validatePostOutageCapacity(normal float64, postOutage *float64) error {
+	if postOutage != nil && *postOutage > normal {
+		return errors.New("post-outage cooling capacity must not exceed normal cooling capacity")
+	}
+	return nil
 }
 
 func (r CreateThermalZoneRequest) ValidateBusiness() error {
@@ -50,12 +61,18 @@ func (r CreateThermalZoneRequest) ValidateBusiness() error {
 	if r.MaxReturnTempC <= r.SupplyTempC {
 		return errors.New("max return temperature must exceed supply temperature")
 	}
+	if err := validatePostOutageCapacity(r.CoolingCapacityKW, r.PostOutageCapacityKW); err != nil {
+		return err
+	}
 	return validateAdjacency(r.ZoneCode, r.Adjacency)
 }
 
 func (r UpdateThermalZoneRequest) ValidateBusiness(zoneCode string) error {
 	if r.MaxReturnTempC <= r.SupplyTempC {
 		return errors.New("max return temperature must exceed supply temperature")
+	}
+	if err := validatePostOutageCapacity(r.CoolingCapacityKW, r.PostOutageCapacityKW); err != nil {
+		return err
 	}
 	return validateAdjacency(zoneCode, r.Adjacency)
 }
@@ -81,13 +98,14 @@ func NewThermalZone(req CreateThermalZoneRequest) (model.ThermalZone, error) {
 		return model.ThermalZone{}, fmt.Errorf("encode zone adjacency: %w", err)
 	}
 	return model.ThermalZone{
-		ZoneCode:          strings.ToUpper(strings.TrimSpace(req.ZoneCode)),
-		Name:              strings.TrimSpace(req.Name),
-		CoolingCapacityKW: req.CoolingCapacityKW,
-		SupplyTempC:       req.SupplyTempC,
-		MaxReturnTempC:    req.MaxReturnTempC,
-		AdjacencyJSON:     string(adjacency),
-		ZoneStatus:        req.ZoneStatus,
+		ZoneCode:             strings.ToUpper(strings.TrimSpace(req.ZoneCode)),
+		Name:                 strings.TrimSpace(req.Name),
+		CoolingCapacityKW:    req.CoolingCapacityKW,
+		PostOutageCapacityKW: req.PostOutageCapacityKW,
+		SupplyTempC:          req.SupplyTempC,
+		MaxReturnTempC:       req.MaxReturnTempC,
+		AdjacencyJSON:        string(adjacency),
+		ZoneStatus:           req.ZoneStatus,
 	}, nil
 }
 

@@ -73,10 +73,11 @@ func seed(db *gorm.DB) error {
 	adjA, _ := json.Marshal(map[string]float64{"TZ-B": 0.22, "TZ-C": 0.08})
 	adjB, _ := json.Marshal(map[string]float64{"TZ-A": 0.22, "TZ-C": 0.16})
 	adjC, _ := json.Marshal(map[string]float64{"TZ-A": 0.08, "TZ-B": 0.16})
+	postOutageB, postOutageC := 108.0, 56.0
 	zones := []model.ThermalZone{
 		{ZoneCode: "TZ-A", Name: "North cold aisle", CoolingCapacityKW: 96, SupplyTempC: 18.5, MaxReturnTempC: 31, AdjacencyJSON: string(adjA), ZoneStatus: "active"},
-		{ZoneCode: "TZ-B", Name: "Core compute aisle", CoolingCapacityKW: 132, SupplyTempC: 19, MaxReturnTempC: 32, AdjacencyJSON: string(adjB), ZoneStatus: "active"},
-		{ZoneCode: "TZ-C", Name: "Network edge aisle", CoolingCapacityKW: 74, SupplyTempC: 18, MaxReturnTempC: 30, AdjacencyJSON: string(adjC), ZoneStatus: "constrained"},
+		{ZoneCode: "TZ-B", Name: "Core compute aisle", CoolingCapacityKW: 132, PostOutageCapacityKW: &postOutageB, SupplyTempC: 19, MaxReturnTempC: 32, AdjacencyJSON: string(adjB), ZoneStatus: "active"},
+		{ZoneCode: "TZ-C", Name: "Network edge aisle", CoolingCapacityKW: 74, PostOutageCapacityKW: &postOutageC, SupplyTempC: 18, MaxReturnTempC: 30, AdjacencyJSON: string(adjC), ZoneStatus: "constrained"},
 	}
 	if err := db.Create(&zones).Error; err != nil {
 		return fmt.Errorf("seed thermal zones: %w", err)
